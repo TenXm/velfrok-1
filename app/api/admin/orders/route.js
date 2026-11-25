@@ -139,7 +139,7 @@ export async function PATCH(request) {
       return reply(auth.session, { error: "Invalid request data." }, 400);
     }
 
-    const { orderId, paymentStatus, orderStatus } = body || {};
+    const { orderId, paymentStatus, orderStatus, courierCompany, awbNumber } = body || {};
     const id = clean(String(orderId || ""), 40);
 
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
@@ -166,9 +166,18 @@ export async function PATCH(request) {
       return reply(auth.session, { error: "Invalid order status." }, 400);
     }
 
+    // Courier + AWB are required when dispatching
+    if (orderStatus === "dispatched") {
+      const courier = clean(String(courierCompany || ""), 80).trim();
+      const awb = clean(String(awbNumber || ""), 80).trim();
+      if (!courier) return reply(auth.session, { error: "Courier company is required for dispatch." }, 400);
+      if (!awb) return reply(auth.session, { error: "AWB / tracking number is required for dispatch." }, 400);
+    }
+
     if (paymentStatus === undefined && orderStatus === undefined) {
       return reply(auth.session, { error: "Nothing to update." }, 400);
     }
+
 
     if (paymentStatus !== undefined && orderStatus !== undefined) {
       return reply(
@@ -292,9 +301,17 @@ export async function PATCH(request) {
         );
       }
 
+      const dispatchFields =
+        orderStatus === "dispatched"
+          ? {
+              courier_company: clean(String(courierCompany || ""), 80).trim(),
+              awb_number: clean(String(awbNumber || ""), 80).trim(),
+            }
+          : {};
+
       const { data: updatedOrder, error: updateError } = await auth.client
         .from("orders")
-        .update({ status: orderStatus })
+        .update({ status: orderStatus, ...dispatchFields })
         .eq("id", id)
         .eq("status", existingOrder.status)
         .select("id")

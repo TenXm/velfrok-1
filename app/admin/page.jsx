@@ -10,6 +10,7 @@ const sections = [
   ["Payments", "Review payment records", "/admin/payments"],
   ["Customers", "View customer records", "/admin/customers"],
   ["Coupons", "Manage discounts and offers", "/admin/coupons"],
+  ["Courier Settings", "Manage courier companies for dispatch", "/admin/couriers"],
 ];
 
 export default function AdminDashboard() {

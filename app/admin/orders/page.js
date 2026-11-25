@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 const cellStyle = {
@@ -78,6 +78,16 @@ export default function OrdersPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  // Courier companies
+  const [couriers, setCouriers] = useState([]);
+  const couriersLoaded = useRef(false);
+
+  // Dispatch modal state
+  const [dispatchModal, setDispatchModal] = useState(null); // { order }
+  const [dispatchCourier, setDispatchCourier] = useState("");
+  const [dispatchAwb, setDispatchAwb] = useState("");
+  const [dispatchBusy, setDispatchBusy] = useState(false);
+
   const loadOrders = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -103,9 +113,67 @@ export default function OrdersPage() {
     }
   }, []);
 
+  // Load courier companies once
+  const loadCouriers = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/couriers", { credentials: "include", cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && json.couriers?.length) {
+        setCouriers(json.couriers);
+      }
+    } catch {
+      // non-fatal — dispatcher can still type manually
+    }
+  }, []);
+
   useEffect(() => {
     loadOrders();
-  }, [loadOrders]);
+    if (!couriersLoaded.current) {
+      couriersLoaded.current = true;
+      loadCouriers();
+    }
+  }, [loadOrders, loadCouriers]);
+
+  // Opens the dispatch modal; actual API call happens inside the modal.
+  function openDispatchModal(order) {
+    setDispatchCourier(couriers[0]?.id || "");
+    setDispatchAwb("");
+    setDispatchModal({ order });
+  }
+
+  async function submitDispatch() {
+    if (!dispatchModal) return;
+    if (!dispatchCourier) { setError("Please select a courier."); return; }
+    if (!dispatchAwb.trim()) { setError("Please enter the AWB / tracking number."); return; }
+
+    setDispatchBusy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const res = await fetch("/api/admin/orders", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          orderId: dispatchModal.order.id,
+          orderStatus: "dispatched",
+          courierCompany: dispatchCourier,
+          awbNumber: dispatchAwb.trim(),
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "The action was rejected.");
+      setNotice("Order dispatched successfully.");
+      setDispatchModal(null);
+      await loadOrders();
+    } catch (err) {
+      setError(err.message || "Could not dispatch the order.");
+    } finally {
+      setDispatchBusy(false);
+    }
+  }
 
   async function performAction(order, action) {
     if (busyId) return;
@@ -117,6 +185,12 @@ export default function OrdersPage() {
       setError(
         "Payment approval blocked: no valid submitted UTR was found. Refresh the order and verify its payment details."
       );
+      return;
+    }
+
+    // Dispatch uses its own modal — not window.confirm
+    if (action === "dispatched") {
+      openDispatchModal(order);
       return;
     }
 
@@ -290,6 +364,110 @@ export default function OrdersPage() {
         fontFamily: "Arial, sans-serif",
       }}
     >
+      {/* ── Dispatch Modal ─────────────────────────── */}
+      {dispatchModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 16,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDispatchModal(null); }}
+        >
+          <div
+            style={{
+              background: "#fff", borderRadius: 16,
+              padding: "28px 24px", maxWidth: 440, width: "100%",
+              boxShadow: "0 8px 32px #17203330",
+            }}
+          >
+            <h2 style={{ fontSize: 18, margin: "0 0 6px" }}>Dispatch Order</h2>
+            <p style={{ color: "#68738a", fontSize: 13, margin: "0 0 20px" }}>
+              Order: <strong>{dispatchModal.order.order_code || dispatchModal.order.id}</strong>
+            </p>
+
+            <label style={{ display: "block", fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+              Courier Company *
+            </label>
+            {couriers.length > 0 ? (
+              <select
+                value={dispatchCourier}
+                onChange={(e) => setDispatchCourier(e.target.value)}
+                disabled={dispatchBusy}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8,
+                  border: "1px solid #d0d5dd", fontSize: 14, marginBottom: 16,
+                  boxSizing: "border-box", outline: "none",
+                }}
+              >
+                <option value="">— Select courier —</option>
+                {couriers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                placeholder="Type courier name…"
+                value={dispatchCourier}
+                onChange={(e) => setDispatchCourier(e.target.value)}
+                disabled={dispatchBusy}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8,
+                  border: "1px solid #d0d5dd", fontSize: 14, marginBottom: 16,
+                  boxSizing: "border-box", outline: "none",
+                }}
+              />
+            )}
+
+            <label style={{ display: "block", fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+              AWB / Tracking Number *
+            </label>
+            <input
+              placeholder="Enter AWB or tracking number"
+              value={dispatchAwb}
+              onChange={(e) => setDispatchAwb(e.target.value)}
+              disabled={dispatchBusy}
+              maxLength={80}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8,
+                border: "1px solid #d0d5dd", fontSize: 14, marginBottom: 24,
+                boxSizing: "border-box", outline: "none",
+              }}
+            />
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setDispatchModal(null)}
+                disabled={dispatchBusy}
+                style={{
+                  padding: "10px 20px", border: "1px solid #d0d5dd",
+                  borderRadius: 8, background: "#fff", fontWeight: 700,
+                  cursor: "pointer", fontSize: 14,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitDispatch}
+                disabled={dispatchBusy || !dispatchCourier || !dispatchAwb.trim()}
+                style={{
+                  padding: "10px 20px", background: "#172033", color: "#fff",
+                  border: 0, borderRadius: 8, fontWeight: 700,
+                  cursor: "pointer", fontSize: 14,
+                  opacity: (dispatchBusy || !dispatchCourier || !dispatchAwb.trim()) ? 0.5 : 1,
+                }}
+              >
+                {dispatchBusy ? "Dispatching…" : "Confirm Dispatch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ───────────────────────────────────────────── */}
+
       <Link
         href="/admin"
         style={{ color: "#e87528", fontWeight: 700 }}
